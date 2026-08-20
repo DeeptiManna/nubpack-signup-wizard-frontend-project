@@ -1,5 +1,9 @@
 # React + Vite
 
+## Email OTP setup
+
+Copy `.env.example` to `.env`, then add a Resend API key and a sender email from a verified Resend domain. Start the app with `npm run dev`; account verification codes will be sent to the email entered during signup.
+
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
 Currently, two official plugins are available:

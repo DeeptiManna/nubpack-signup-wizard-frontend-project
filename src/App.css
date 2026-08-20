@@ -407,11 +407,23 @@
   width: 36px;
   height: 36px;
   border-radius: 12px;
+  border: none;
   display: grid;
   place-items: center;
   font-weight: 700;
+  font: inherit;
   background: #edf2ff;
   color: #5d6d91;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+.step-dot:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.step-dot:disabled {
+  cursor: default;
 }
 
 .step-dot.active {

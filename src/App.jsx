@@ -1,4 +1,4 @@
-import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton, ClerkProvider } from '@clerk/clerk-react'
+import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton, useSignUp } from '@clerk/clerk-react'
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
@@ -131,7 +131,6 @@ function validateField(group, field, value) {
 
   if (field === 'password') {
     if (!trimmed) return 'Password is required.'
-    if (trimmed.length < 8) return 'Use at least 8 characters.'
     return ''
   }
 
@@ -184,7 +183,7 @@ function validateField(group, field, value) {
 
   if (field === 'otp') {
     if (!trimmed) return 'OTP is required.'
-    if (!/^\d{4}$/.test(trimmed)) return 'OTP must be a 4-digit code.'
+    if (!/^\d{6}$/.test(trimmed)) return 'OTP must be a 6-digit code.'
     return ''
   }
 
@@ -225,6 +224,7 @@ function getStepErrorMap(step, data) {
 }
 
 function App() {
+  const { signUp } = useSignUp()
   const [screen, setScreen] = useState('landing')
   const [wizardStep, setWizardStep] = useState(0)
   const [formData, setFormData] = useState(initialForm)
@@ -233,7 +233,6 @@ function App() {
   const [touched, setTouched] = useState({})
   const [toast, setToast] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [otpCode, setOtpCode] = useState('4824')
   const [otpAttempts, setOtpAttempts] = useState(0)
   const [resendCountdown, setResendCountdown] = useState(30)
 
@@ -245,18 +244,6 @@ function App() {
   const cityOptions = selectedState ? Object.keys(selectedState.cities) : []
   const collegeOptions =
     selectedState && formData.education.city ? selectedState.cities[formData.education.city] : []
-
-  useEffect(() => {
-    if (screen !== 'wizard' || wizardStep !== 3) return
-
-    const timer = setTimeout(() => {
-      const nextOtp = String(Math.floor(1000 + Math.random() * 9000))
-      setOtpCode(nextOtp)
-      setResendCountdown(30)
-    }, 300)
-
-    return () => clearTimeout(timer)
-  }, [screen, wizardStep])
 
   useEffect(() => {
     if (screen !== 'wizard' || wizardStep !== 3 || resendCountdown <= 0) return
@@ -326,7 +313,17 @@ function App() {
     return !hasError
   }
 
-  const handleContinue = () => {
+  const sendOtp = async () => {
+    await signUp.create({
+      emailAddress: formData.account.email,
+      password: formData.account.password,
+      firstName: formData.account.fullName,
+    })
+
+    await signUp.prepareEmailAddressVerification({ strategy: 'email_code' })
+  }
+
+  const handleContinue = async () => {
     if (loading) return
 
     const isValid = validateCurrentStep()
@@ -335,24 +332,41 @@ function App() {
       return
     }
 
+    if (wizardStep === 2) {
+      setLoading(true)
+      try {
+        await sendOtp()
+        setResendCountdown(30)
+        setFormData((previous) => ({ ...previous, otp: { ...previous.otp, code: '' } }))
+        setErrors((previous) => ({ ...previous, otp: '' }))
+        setWizardStep(3)
+        setLoading(false)
+        showToast(`A verification code was sent to ${formData.account.email}.`, 'success')
+      } catch (error) {
+        showToast(error.message, 'error')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
     if (wizardStep === 3) {
-      const expectedOtp = otpCode
       const enteredCode = formData.otp.code.trim()
 
       setLoading(true)
-      window.setTimeout(() => {
-        if (enteredCode !== expectedOtp) {
+      signUp.attemptEmailAddressVerification({ code: enteredCode })
+        .then(() => {
+          setErrors((previous) => ({ ...previous, otp: '' }))
+          setScreen('success')
+        })
+        .catch((error) => {
           setOtpAttempts((value) => value + 1)
-          setErrors((previous) => ({ ...previous, otp: 'Incorrect OTP. Use the demo code shown on screen.' }))
-          showToast('Verification failed. Please try the correct OTP.', 'error')
+          setErrors((previous) => ({ ...previous, otp: error.message }))
+          showToast(error.message, 'error')
+        })
+        .finally(() => {
           setLoading(false)
-          return
-        }
-
-        setErrors((previous) => ({ ...previous, otp: '' }))
-        setScreen('success')
-        setLoading(false)
-      }, 1000)
+        })
       return
     }
 
@@ -369,6 +383,16 @@ function App() {
       return
     }
     setWizardStep((step) => Math.max(step - 1, 0))
+  }
+
+  const handleExitSignup = () => {
+    setScreen('landing')
+  }
+
+  const handleStepNavigation = (step) => {
+    if (loading || step > wizardStep) return
+    setErrors({})
+    setWizardStep(step)
   }
 
   const goToTerms = () => {
@@ -398,15 +422,21 @@ function App() {
     setWizardStep(0)
   }
 
-  const resendOtp = () => {
+  const resendOtp = async () => {
     if (resendCountdown > 0) return
-    const nextOtp = String(Math.floor(1000 + Math.random() * 9000))
-    setOtpCode(nextOtp)
-    setFormData((previous) => ({ ...previous, otp: { ...previous.otp, code: '' } }))
-    setErrors((previous) => ({ ...previous, otp: '' }))
-    setOtpAttempts(0)
-    setResendCountdown(30)
-    showToast('A new OTP was sent to your device.', 'success')
+    setLoading(true)
+    try {
+      await signUp.prepareEmailAddressVerification({ strategy: 'email_code' })
+      setFormData((previous) => ({ ...previous, otp: { ...previous.otp, code: '' } }))
+      setErrors((previous) => ({ ...previous, otp: '' }))
+      setOtpAttempts(0)
+      setResendCountdown(30)
+      showToast(`A new verification code was sent to ${formData.account.email}.`, 'success')
+    } catch (error) {
+      showToast(error.message, 'error')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const toggleInterest = (interest) => {
@@ -433,18 +463,16 @@ function App() {
           <div className="brand-mark">N</div>
           <span>Nubpack</span>
         </div>
-        <ClerkProvider publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY || 'pk_test_c3Ryb25nLWxvbmdob3JuLTc2LmNsZXJrLmFjY291bnRzLmRldiQ'}>
-          <SignedOut>
-            <SignInButton mode="modal">
-              <button type="button" className="ghost-button small-button" onClick={handleLogin}>
-                Login
-              </button>
-            </SignInButton>
-          </SignedOut>
-          <SignedIn>
-            <UserButton afterSignOutUrl="/" />
-          </SignedIn>
-        </ClerkProvider>
+        <SignedOut>
+          <SignInButton mode="modal">
+            <button type="button" className="ghost-button small-button" onClick={handleLogin}>
+              Login
+            </button>
+          </SignInButton>
+        </SignedOut>
+        <SignedIn>
+          <UserButton afterSignOutUrl="/" />
+        </SignedIn>
       </header>
 
       <main className="hero-panel">
@@ -609,13 +637,17 @@ function App() {
 
           <div className="stepper" aria-label="Signup progress">
             {stepMeta.map((step, index) => (
-              <div
+              <button
+                type="button"
                 key={step.key}
                 className={`step-dot ${index === wizardStep ? 'active' : index < wizardStep ? 'done' : ''}`}
                 aria-current={index === wizardStep ? 'step' : undefined}
+                aria-label={`Go to ${step.title} step`}
+                onClick={() => handleStepNavigation(index)}
+                disabled={loading || index > wizardStep}
               >
                 {index + 1}
-              </div>
+              </button>
             ))}
           </div>
 
@@ -678,7 +710,7 @@ function App() {
                   type="password"
                   value={formData.account.password}
                   onChange={(event) => setFieldValue('account', 'password', event.target.value)}
-                  placeholder="At least 8 characters"
+                  placeholder="Enter a password"
                   aria-invalid={Boolean(errors.password)}
                 />
                 {renderFieldError('password')}
@@ -832,7 +864,7 @@ function App() {
               <div className="otp-summary">
                 <span className="otp-badge">Secure check</span>
                 <p>
-                  We sent a verification code to <strong>{formData.account.phone || 'your mobile number'}</strong>.
+                  We sent a verification code to <strong>{formData.account.email || 'your email address'}</strong>.
                 </p>
               </div>
 
@@ -840,22 +872,24 @@ function App() {
                 <label htmlFor="otp">Verification code</label>
                 <input
                   id="otp"
-                  type="text"
+                  type="tel"
                   inputMode="numeric"
-                  maxLength={4}
+                  maxLength={6}
+                  autoComplete="one-time-code"
+                  pattern="[0-9]*"
+                  disabled={false}
                   value={formData.otp.code}
                   onChange={(event) => {
-                    const sanitized = event.target.value.replace(/\D/g, '').slice(0, 4)
-                    setFieldValue('otp', 'otp', sanitized)
+                    const sanitized = event.target.value.replace(/\D/g, '').slice(0, 6)
+                    setFieldValue('otp', 'code', sanitized)
                   }}
-                  placeholder="Enter 4-digit OTP"
+                  placeholder="Enter 6-digit OTP"
                   aria-invalid={Boolean(errors.otp)}
                 />
                 {renderFieldError('otp')}
               </div>
 
               <div className="otp-meta-row">
-                <span>Demo OTP: {otpCode}</span>
                 <button type="button" className="link-button" onClick={resendOtp} disabled={resendCountdown > 0}>
                   {resendCountdown > 0 ? `Resend in ${resendCountdown}s` : 'Resend OTP'}
                 </button>
@@ -863,7 +897,7 @@ function App() {
 
               {otpAttempts > 0 && (
                 <p className="helper-copy">
-                  Wrong code submitted {otpAttempts} time{otpAttempts > 1 ? 's' : ''}. Use the demo OTP to continue.
+                  Wrong code submitted {otpAttempts} time{otpAttempts > 1 ? 's' : ''}. Check your email and try again.
                 </p>
               )}
             </div>
@@ -872,6 +906,9 @@ function App() {
           <div className="button-row">
             <button type="button" className="secondary-button" onClick={handleBack} disabled={loading}>
               Back
+            </button>
+            <button type="button" className="back-link" onClick={handleExitSignup} disabled={loading}>
+              Back to home
             </button>
             <button type="button" className="primary-button" onClick={handleContinue} disabled={loading}>
               {loading ? 'Please wait...' : wizardStep === 3 ? 'Verify & continue' : 'Continue'}
